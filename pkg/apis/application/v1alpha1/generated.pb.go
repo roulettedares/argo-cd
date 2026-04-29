@@ -15714,6 +15714,18 @@ func (m *SCMProviderGeneratorBitbucket) MarshalToSizedBuffer(dAtA []byte) (int, 
 	_ = i
 	var l int
 	_ = l
+	if m.BearerToken != nil {
+		{
+			size, err := m.BearerToken.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintGenerated(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x2a
+	}
 	i--
 	if m.AllBranches {
 		dAtA[i] = 1
@@ -20852,6 +20864,10 @@ func (m *SCMProviderGeneratorBitbucket) Size() (n int) {
 		n += 1 + l + sovGenerated(uint64(l))
 	}
 	n += 2
+	if m.BearerToken != nil {
+		l = m.BearerToken.Size()
+		n += 1 + l + sovGenerated(uint64(l))
+	}
 	return n
 }
 
@@ -24048,6 +24064,7 @@ func (this *SCMProviderGeneratorBitbucket) String() string {
 		`User:` + fmt.Sprintf("%v", this.User) + `,`,
 		`AppPasswordRef:` + strings.Replace(this.AppPasswordRef.String(), "SecretRef", "SecretRef", 1) + `,`,
 		`AllBranches:` + fmt.Sprintf("%v", this.AllBranches) + `,`,
+		`BearerToken:` + strings.Replace(this.BearerToken.String(), "BearerTokenBitbucketCloud", "BearerTokenBitbucketCloud", 1) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -56501,6 +56518,42 @@ func (m *SCMProviderGeneratorBitbucket) Unmarshal(dAtA []byte) error {
 				}
 			}
 			m.AllBranches = bool(v != 0)
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BearerToken", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.BearerToken == nil {
+				m.BearerToken = &BearerTokenBitbucketCloud{}
+			}
+			if err := m.BearerToken.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipGenerated(dAtA[iNdEx:])
