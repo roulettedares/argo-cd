@@ -1,0 +1,79 @@
+{
+  "eventKey": "pr:opened",
+  "date": "2024-01-15T10:00:00+0000",
+  "actor": {
+    "name": "jsmith",
+    "emailAddress": "jsmith@example.com",
+    "id": 1,
+    "displayName": "Jane Smith",
+    "active": true,
+    "slug": "jsmith",
+    "type": "NORMAL"
+  },
+  "pullRequest": {
+    "id": 42,
+    "version": 0,
+    "title": "Add feature X",
+    "state": "OPEN",
+    "open": true,
+    "closed": false,
+    "author": {
+      "user": {
+        "name": "jsmith",
+        "slug": "jsmith",
+        "id": 1,
+        "displayName": "Jane Smith",
+        "active": true,
+        "type": "NORMAL"
+      },
+      "role": "AUTHOR",
+      "approved": false,
+      "status": "UNAPPROVED"
+    },
+    "fromRef": {
+      "id": "refs/heads/feature/x",
+      "displayId": "feature/x",
+      "latestCommit": "abc123def456abc123def456abc123def456abc1",
+      "repository": {
+        "slug": "myrepo",
+        "id": 1,
+        "name": "myrepo",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "MYPROJ",
+          "id": 1,
+          "name": "My Project",
+          "type": "NORMAL"
+        },
+        "public": false
+      }
+    },
+    "toRef": {
+      "id": "refs/heads/main",
+      "displayId": "main",
+      "latestCommit": "def456abc123def456abc123def456abc123def4",
+      "repository": {
+        "slug": "myrepo",
+        "id": 1,
+        "name": "myrepo",
+        "scmId": "git",
+        "state": "AVAILABLE",
+        "statusMessage": "Available",
+        "forkable": true,
+        "project": {
+          "key": "MYPROJ",
+          "id": 1,
+          "name": "My Project",
+          "type": "NORMAL"
+        },
+        "public": false
+      }
+    },
+    "locked": false,
+    "reviewers": [],
+    "participants": []
+  }
+}

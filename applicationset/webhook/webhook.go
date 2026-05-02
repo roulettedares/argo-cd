@@ -23,6 +23,8 @@ import (
 	"github.com/argoproj/argo-cd/v3/util/webhook"
 
 	"github.com/go-playground/webhooks/v6/azuredevops"
+	"github.com/go-playground/webhooks/v6/bitbucket"
+	bitbucketserver "github.com/go-playground/webhooks/v6/bitbucket-server"
 	"github.com/go-playground/webhooks/v6/github"
 	"github.com/go-playground/webhooks/v6/gitlab"
 	log "github.com/sirupsen/logrus"
@@ -36,12 +38,14 @@ const panicMsgAppSet = "panic while processing applicationset-controller webhook
 
 type WebhookHandler struct {
 	sync.WaitGroup // for testing
-	github         *github.Webhook
-	gitlab         *gitlab.Webhook
-	azuredevops    *azuredevops.Webhook
-	client         client.Client
-	generators     map[string]generators.Generator
-	queue          chan any
+	github          *github.Webhook
+	gitlab          *gitlab.Webhook
+	azuredevops     *azuredevops.Webhook
+	bitbucket       *bitbucket.Webhook
+	bitbucketserver *bitbucketserver.Webhook
+	client          client.Client
+	generators      map[string]generators.Generator
+	queue           chan any
 }
 
 type gitGeneratorInfo struct {
@@ -51,9 +55,11 @@ type gitGeneratorInfo struct {
 }
 
 type prGeneratorInfo struct {
-	Azuredevops *prGeneratorAzuredevopsInfo
-	Github      *prGeneratorGithubInfo
-	Gitlab      *prGeneratorGitlabInfo
+	Azuredevops     *prGeneratorAzuredevopsInfo
+	Github          *prGeneratorGithubInfo
+	Gitlab          *prGeneratorGitlabInfo
+	BitbucketCloud  *prGeneratorBitbucketCloudInfo
+	BitbucketServer *prGeneratorBitbucketServerInfo
 }
 
 type prGeneratorAzuredevopsInfo struct {
@@ -70,6 +76,16 @@ type prGeneratorGithubInfo struct {
 type prGeneratorGitlabInfo struct {
 	Project     string
 	APIHostname string
+}
+
+type prGeneratorBitbucketCloudInfo struct {
+	Owner string
+	Repo  string
+}
+
+type prGeneratorBitbucketServerInfo struct {
+	Project string
+	Repo    string
 }
 
 func NewWebhookHandler(webhookParallelism int, argocdSettingsMgr *argosettings.SettingsManager, client client.Client, generators map[string]generators.Generator) (*WebhookHandler, error) {
@@ -90,14 +106,24 @@ func NewWebhookHandler(webhookParallelism int, argocdSettingsMgr *argosettings.S
 	if err != nil {
 		return nil, fmt.Errorf("unable to init Azure DevOps webhook: %w", err)
 	}
+	bitbucketHandler, err := bitbucket.New(bitbucket.Options.UUID(argocdSettings.GetWebhookBitbucketUUID()))
+	if err != nil {
+		return nil, fmt.Errorf("unable to init Bitbucket webhook: %w", err)
+	}
+	bitbucketServerHandler, err := bitbucketserver.New(bitbucketserver.Options.Secret(argocdSettings.GetWebhookBitbucketServerSecret()))
+	if err != nil {
+		return nil, fmt.Errorf("unable to init Bitbucket Server webhook: %w", err)
+	}
 
 	webhookHandler := &WebhookHandler{
-		github:      githubHandler,
-		gitlab:      gitlabHandler,
-		azuredevops: azuredevopsHandler,
-		client:      client,
-		generators:  generators,
-		queue:       make(chan any, payloadQueueSize),
+		github:          githubHandler,
+		gitlab:          gitlabHandler,
+		azuredevops:     azuredevopsHandler,
+		bitbucket:       bitbucketHandler,
+		bitbucketserver: bitbucketServerHandler,
+		client:          client,
+		generators:      generators,
+		queue:           make(chan any, payloadQueueSize),
 	}
 
 	webhookHandler.startWorkerPool(webhookParallelism)
@@ -169,6 +195,26 @@ func (h *WebhookHandler) Handler(w http.ResponseWriter, r *http.Request) {
 		payload, err = h.gitlab.Parse(r, gitlab.PushEvents, gitlab.TagEvents, gitlab.MergeRequestEvents, gitlab.SystemHookEvents)
 	case r.Header.Get("X-Vss-Activityid") != "":
 		payload, err = h.azuredevops.Parse(r, azuredevops.GitPushEventType, azuredevops.GitPullRequestCreatedEventType, azuredevops.GitPullRequestUpdatedEventType, azuredevops.GitPullRequestMergedEventType)
+	// X-Hook-UUID is unique to Bitbucket Cloud; must be checked before X-Event-Key
+	case r.Header.Get("X-Hook-UUID") != "":
+		payload, err = h.bitbucket.Parse(r,
+			bitbucket.RepoPushEvent,
+			bitbucket.PullRequestCreatedEvent,
+			bitbucket.PullRequestUpdatedEvent,
+			bitbucket.PullRequestMergedEvent,
+			bitbucket.PullRequestDeclinedEvent,
+		)
+	// X-Event-Key without X-Hook-UUID identifies Bitbucket Server / Data Center
+	case r.Header.Get("X-Event-Key") != "":
+		payload, err = h.bitbucketserver.Parse(r,
+			bitbucketserver.RepositoryReferenceChangedEvent,
+			bitbucketserver.PullRequestOpenedEvent,
+			bitbucketserver.PullRequestFromReferenceUpdatedEvent,
+			bitbucketserver.PullRequestModifiedEvent,
+			bitbucketserver.PullRequestMergedEvent,
+			bitbucketserver.PullRequestDeclinedEvent,
+			bitbucketserver.PullRequestDeletedEvent,
+		)
 	default:
 		log.Debug("Ignoring unknown webhook event")
 		http.Error(w, "Unknown webhook event", http.StatusBadRequest)
@@ -214,6 +260,20 @@ func getGitGeneratorInfo(payload any) *gitGeneratorInfo {
 		revision = webhook.ParseRevision(payload.Resource.RefUpdates[0].Name)
 		touchedHead = payload.Resource.RefUpdates[0].Name == payload.Resource.Repository.DefaultBranch
 		// unfortunately, Azure DevOps doesn't provide a list of changed files
+	case bitbucket.RepoPushPayload:
+		webURL = payload.Repository.Links.HTML.Href
+		if len(payload.Push.Changes) > 0 {
+			revision = payload.Push.Changes[0].New.Name
+		}
+		// Default branch is not included in the push payload; treat all pushes as potentially touching HEAD.
+		touchedHead = true
+	case bitbucketserver.RepositoryReferenceChangedPayload:
+		webURL = bitbucketServerHTTPCloneURL(payload.Repository.Links)
+		if len(payload.Changes) > 0 {
+			revision = webhook.ParseRevision(payload.Changes[0].Reference.ID)
+		}
+		// Default branch is not included in the push payload; treat all pushes as potentially touching HEAD.
+		touchedHead = true
 	default:
 		return nil
 	}
@@ -279,6 +339,26 @@ func getPRGeneratorInfo(payload any) *prGeneratorInfo {
 			Repo:    repo,
 			Project: project,
 		}
+	case bitbucket.PullRequestCreatedPayload:
+		info.BitbucketCloud = bitbucketCloudPRInfo(payload.Repository)
+	case bitbucket.PullRequestUpdatedPayload:
+		info.BitbucketCloud = bitbucketCloudPRInfo(payload.Repository)
+	case bitbucket.PullRequestMergedPayload:
+		info.BitbucketCloud = bitbucketCloudPRInfo(payload.Repository)
+	case bitbucket.PullRequestDeclinedPayload:
+		info.BitbucketCloud = bitbucketCloudPRInfo(payload.Repository)
+	case bitbucketserver.PullRequestOpenedPayload:
+		info.BitbucketServer = bitbucketServerPRInfo(payload.PullRequest)
+	case bitbucketserver.PullRequestFromReferenceUpdatedPayload:
+		info.BitbucketServer = bitbucketServerPRInfo(payload.PullRequest)
+	case bitbucketserver.PullRequestModifiedPayload:
+		info.BitbucketServer = bitbucketServerPRInfo(payload.PullRequest)
+	case bitbucketserver.PullRequestMergedPayload:
+		info.BitbucketServer = bitbucketServerPRInfo(payload.PullRequest)
+	case bitbucketserver.PullRequestDeclinedPayload:
+		info.BitbucketServer = bitbucketServerPRInfo(payload.PullRequest)
+	case bitbucketserver.PullRequestDeletedPayload:
+		info.BitbucketServer = bitbucketServerPRInfo(payload.PullRequest)
 	default:
 		return nil
 	}
@@ -405,6 +485,27 @@ func shouldRefreshPRGenerator(gen *v1alpha1.PullRequestGenerator, info *prGenera
 			return false
 		}
 		if gen.AzureDevOps.Repo != info.Azuredevops.Repo {
+			return false
+		}
+		return true
+	}
+
+	if gen.Bitbucket != nil && info.BitbucketCloud != nil {
+		// Bitbucket Cloud workspace and repo names are case-insensitive
+		if !strings.EqualFold(gen.Bitbucket.Owner, info.BitbucketCloud.Owner) {
+			return false
+		}
+		if !strings.EqualFold(gen.Bitbucket.Repo, info.BitbucketCloud.Repo) {
+			return false
+		}
+		return true
+	}
+
+	if gen.BitbucketServer != nil && info.BitbucketServer != nil {
+		if gen.BitbucketServer.Project != info.BitbucketServer.Project {
+			return false
+		}
+		if gen.BitbucketServer.Repo != info.BitbucketServer.Repo {
 			return false
 		}
 		return true
@@ -606,6 +707,44 @@ func (h *WebhookHandler) shouldRefreshMergeGenerator(gen *v1alpha1.MergeGenerato
 	}
 
 	return false
+}
+
+func bitbucketCloudPRInfo(repo bitbucket.Repository) *prGeneratorBitbucketCloudInfo {
+	return &prGeneratorBitbucketCloudInfo{
+		Owner: repo.Owner.NickName,
+		Repo:  repo.Name,
+	}
+}
+
+func bitbucketServerPRInfo(pr bitbucketserver.PullRequest) *prGeneratorBitbucketServerInfo {
+	return &prGeneratorBitbucketServerInfo{
+		Project: pr.FromRef.Repository.Project.Key,
+		Repo:    pr.FromRef.Repository.Slug,
+	}
+}
+
+// bitbucketServerHTTPCloneURL extracts the HTTP clone URL from a Bitbucket Server repository
+// links map. The library defines Links as map[string]interface{}, so type assertions are required.
+func bitbucketServerHTTPCloneURL(links map[string]interface{}) string {
+	if links == nil {
+		return ""
+	}
+	clones, ok := links["clone"].([]any)
+	if !ok {
+		return ""
+	}
+	for _, l := range clones {
+		link, ok := l.(map[string]any)
+		if !ok {
+			continue
+		}
+		if link["name"] == "http" {
+			if href, ok := link["href"].(string); ok {
+				return href
+			}
+		}
+	}
+	return ""
 }
 
 func refreshApplicationSet(c client.Client, appSet *v1alpha1.ApplicationSet) error {

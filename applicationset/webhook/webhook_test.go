@@ -52,6 +52,7 @@ func TestWebhookHandler(t *testing.T) {
 		desc               string
 		headerKey          string
 		headerValue        string
+		extraHeaders       map[string]string
 		effectedAppSets    []string
 		payloadFile        string
 		expectedStatusCode int
@@ -192,6 +193,44 @@ func TestWebhookHandler(t *testing.T) {
 			expectedStatusCode: http.StatusOK,
 			expectedRefresh:    true,
 		},
+		{
+			desc:               "WebHook from a Bitbucket Cloud repository via push event",
+			headerKey:          "X-Hook-UUID",
+			headerValue:        "{some-uuid}",
+			extraHeaders:       map[string]string{"X-Event-Key": "repo:push"},
+			payloadFile:        "bitbucket-cloud-push.json",
+			effectedAppSets:    []string{"plugin", "matrix-pull-request-github-plugin"},
+			expectedStatusCode: http.StatusOK,
+			expectedRefresh:    true,
+		},
+		{
+			desc:         "WebHook from a Bitbucket Cloud repository via pull request created event",
+			headerKey:    "X-Hook-UUID",
+			headerValue:  "{some-uuid}",
+			extraHeaders: map[string]string{"X-Event-Key": "pullrequest:created"},
+			payloadFile:  "bitbucket-cloud-pull-request-created.json",
+			effectedAppSets:    []string{"pull-request-bitbucket-cloud", "plugin", "matrix-pull-request-github-plugin"},
+			expectedStatusCode: http.StatusOK,
+			expectedRefresh:    true,
+		},
+		{
+			desc:               "WebHook from a Bitbucket Server repository via push event",
+			headerKey:          "X-Event-Key",
+			headerValue:        "repo:refs_changed",
+			payloadFile:        "bitbucket-server-push.json",
+			effectedAppSets:    []string{"plugin", "matrix-pull-request-github-plugin"},
+			expectedStatusCode: http.StatusOK,
+			expectedRefresh:    true,
+		},
+		{
+			desc:               "WebHook from a Bitbucket Server repository via pull request opened event",
+			headerKey:          "X-Event-Key",
+			headerValue:        "pr:opened",
+			payloadFile:        "bitbucket-server-pull-request-opened.json",
+			effectedAppSets:    []string{"pull-request-bitbucket-server", "plugin", "matrix-pull-request-github-plugin"},
+			expectedStatusCode: http.StatusOK,
+			expectedRefresh:    true,
+		},
 	}
 
 	namespace := "test"
@@ -218,6 +257,8 @@ func TestWebhookHandler(t *testing.T) {
 				fakeAppWithGithubPullRequestGenerator("pull-request-github", namespace, "CodErTOcat", "Hello-World"),
 				fakeAppWithGitlabPullRequestGenerator("pull-request-gitlab", namespace, "100500"),
 				fakeAppWithAzureDevOpsPullRequestGenerator("pull-request-azure-devops", namespace, "DefaultCollection", "Fabrikam"),
+				fakeAppWithBitbucketCloudPullRequestGenerator("pull-request-bitbucket-cloud", namespace, "my-org", "myrepo"),
+				fakeAppWithBitbucketServerPullRequestGenerator("pull-request-bitbucket-server", namespace, "MYPROJ", "myrepo"),
 				fakeAppWithPluginGenerator("plugin", namespace),
 				fakeAppWithMatrixAndGitGenerator("matrix-git-github", namespace, "https://github.com/org/repo"),
 				fakeAppWithMatrixAndPullRequestGenerator("matrix-pull-request-github", namespace, "Codertocat", "Hello-World"),
@@ -235,6 +276,9 @@ func TestWebhookHandler(t *testing.T) {
 
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/webhook", http.NoBody)
 			req.Header.Set(test.headerKey, test.headerValue)
+			for k, v := range test.extraHeaders {
+				req.Header.Set(k, v)
+			}
 			eventJSON, err := os.ReadFile(filepath.Join("testdata", test.payloadFile))
 			require.NoError(t, err)
 			req.Body = io.NopCloser(bytes.NewReader(eventJSON))
@@ -459,6 +503,48 @@ func fakeAppWithAzureDevOpsPullRequestGenerator(name, namespace, project, repo s
 				{
 					PullRequest: &v1alpha1.PullRequestGenerator{
 						AzureDevOps: &v1alpha1.PullRequestGeneratorAzureDevOps{
+							Project: project,
+							Repo:    repo,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func fakeAppWithBitbucketCloudPullRequestGenerator(name, namespace, owner, repo string) *v1alpha1.ApplicationSet {
+	return &v1alpha1.ApplicationSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: v1alpha1.ApplicationSetSpec{
+			Generators: []v1alpha1.ApplicationSetGenerator{
+				{
+					PullRequest: &v1alpha1.PullRequestGenerator{
+						Bitbucket: &v1alpha1.PullRequestGeneratorBitbucket{
+							Owner: owner,
+							Repo:  repo,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func fakeAppWithBitbucketServerPullRequestGenerator(name, namespace, project, repo string) *v1alpha1.ApplicationSet {
+	return &v1alpha1.ApplicationSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: v1alpha1.ApplicationSetSpec{
+			Generators: []v1alpha1.ApplicationSetGenerator{
+				{
+					PullRequest: &v1alpha1.PullRequestGenerator{
+						BitbucketServer: &v1alpha1.PullRequestGeneratorBitbucketServer{
 							Project: project,
 							Repo:    repo,
 						},
