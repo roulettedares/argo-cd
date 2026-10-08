@@ -19,6 +19,9 @@ type BitbucketCloudService struct {
 	hints          *PRHintStore
 }
 
+// Max page size the pullrequests endpoint accepts; fewer calls against the hourly rate limit.
+const bitbucketCloudPagelen = 50
+
 type BitbucketCloudPullRequest struct {
 	ID          int                                  `json:"id"`
 	Title       string                               `json:"title"`
@@ -88,6 +91,7 @@ func NewBitbucketCloudServiceBasicAuth(baseURL, username, password, owner, repos
 		return nil, fmt.Errorf("error creating BitBucket Cloud client with basic auth: %w", err)
 	}
 	bitbucketClient.SetApiBaseURL(*url)
+	bitbucketClient.Pagelen = bitbucketCloudPagelen
 
 	return &BitbucketCloudService{
 		client:         bitbucketClient,
@@ -108,6 +112,7 @@ func NewBitbucketCloudServiceBearerToken(baseURL, bearerToken, owner, repository
 		return nil, fmt.Errorf("error creating BitBucket Cloud client with oauth bearer token: %w", err)
 	}
 	bitbucketClient.SetApiBaseURL(*url)
+	bitbucketClient.Pagelen = bitbucketCloudPagelen
 
 	return &BitbucketCloudService{client: bitbucketClient, owner: owner, repositorySlug: repositorySlug, hints: hints}, nil
 }
